@@ -32,12 +32,3 @@ func main() {
 func meow() {
 	fmt.Println("мяу", instanceNum)
 }
-
-/*
-func doWork() {
-	if isMaster {
-		fmt.Println("I'm master", instanceNum)
-	} else {
-		fmt.Println("I'm slave", instanceNum)
-	}
-}*/
