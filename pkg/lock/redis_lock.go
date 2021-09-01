@@ -1,4 +1,4 @@
-package db
+package lock
 
 import (
 	"context"
@@ -18,7 +18,7 @@ var (
 	masterAlreadyElectedError = errors.New("master already elected")
 )
 
-type Client struct {
+type RedisDistributedLock struct {
 	client      *redis.Client
 	ctx         context.Context
 	f           func()
@@ -26,8 +26,8 @@ type Client struct {
 	instanceNum string
 }
 
-func NewClient(client *redis.Client, ctx context.Context, instanceNum string, f func()) *Client {
-	return &Client{
+func New(client *redis.Client, ctx context.Context, instanceNum string, f func()) *RedisDistributedLock {
+	return &RedisDistributedLock{
 		client:      client,
 		ctx:         ctx,
 		instanceNum: instanceNum,
@@ -35,7 +35,7 @@ func NewClient(client *redis.Client, ctx context.Context, instanceNum string, f 
 	}
 }
 
-func (c *Client) handleError(err error) {
+func (c *RedisDistributedLock) handleError(err error) {
 	if err == masterAlreadyElectedError {
 		fmt.Println("master already elected")
 
@@ -49,7 +49,7 @@ func (c *Client) handleError(err error) {
 	fmt.Println("Error:", err)
 }
 
-func (c *Client) setMaster(val string) error {
+func (c *RedisDistributedLock) setMaster(val string) error {
 	txf := func(tx *redis.Tx) error {
 		_, err := tx.TxPipelined(c.ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(c.ctx, MasterKeyName, val, MasterTtl)
@@ -71,7 +71,7 @@ func (c *Client) setMaster(val string) error {
 	return nil
 }
 
-func (c *Client) ClientFunc() {
+func (c *RedisDistributedLock) Run() {
 	waitCount := 0
 	for {
 		val, err := c.client.Get(c.ctx, MasterKeyName).Result()
@@ -108,7 +108,7 @@ func (c *Client) ClientFunc() {
 	}
 }
 
-func (c *Client) doMasterWork() {
+func (c *RedisDistributedLock) doMasterWork() {
 	if c.isMaster {
 		c.f()
 	} else {

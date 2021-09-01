@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/go-redis/redis/v8"
 	"os"
-	"redlock/db"
+	"redlock/pkg/lock"
 )
 
 var (
@@ -17,7 +17,7 @@ func init() {
 }
 
 func main() {
-	client := db.NewClient(redis.NewClient(&redis.Options{
+	task := lock.New(redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "", // no password set
 		DB:       0,  // use default DB
@@ -26,7 +26,7 @@ func main() {
 		instanceNum,
 		meow)
 
-	client.ClientFunc()
+	task.Run()
 }
 
 func meow() {
