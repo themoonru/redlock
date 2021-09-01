@@ -3,31 +3,115 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/go-redis/redis/v8"
+	"time"
 )
 
-type Database struct {
-	client      *redis.Client
-	instanceNum string
-	isMaster    bool
-}
+const (
+	CheckInterval = time.Second * 1
+	MasterTtl     = time.Second * 5
+	MasterKeyName = "master"
+)
 
 var (
-	ctx = context.Background()
-
 	masterAlreadyElectedError = errors.New("master already elected")
 )
 
-func (db *Database) NewDatabase(address string) (*Database, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     address,
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	})
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, err
+type Client struct {
+	client      *redis.Client
+	ctx         context.Context
+	f           func()
+	isMaster    bool
+	instanceNum string
+}
+
+func NewClient(client *redis.Client, ctx context.Context, instanceNum string, f func()) *Client {
+	return &Client{
+		client:      client,
+		ctx:         ctx,
+		instanceNum: instanceNum,
+		f:           f,
 	}
-	return &Database{
-		client: client,
-	}, nil
+}
+
+func (c *Client) handleError(err error) {
+	if err == masterAlreadyElectedError {
+		fmt.Println("master already elected")
+
+		return
+	}
+
+	c.isMaster = false
+	fmt.Println("Unknown master status. Fancing myself...")
+	time.Sleep(time.Second)
+
+	fmt.Println("Error:", err)
+}
+
+func (c *Client) setMaster(val string) error {
+	txf := func(tx *redis.Tx) error {
+		_, err := tx.TxPipelined(c.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(c.ctx, MasterKeyName, val, MasterTtl)
+			return nil
+		})
+
+		return err
+	}
+
+	err := c.client.Watch(c.ctx, txf, MasterKeyName)
+	if err != nil {
+		if err == redis.TxFailedErr {
+			return masterAlreadyElectedError
+		}
+
+		return fmt.Errorf("error on watch: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) ClientFunc() {
+	waitCount := 0
+	for {
+		val, err := c.client.Get(c.ctx, MasterKeyName).Result()
+		// если ошибка получения значения
+		if err != nil {
+			// если ошибка связана не с отсутствием ключа
+			if err != redis.Nil {
+				c.handleError(err)
+				continue
+			}
+
+			// если ключ master был пустой
+			fmt.Println("master not elected")
+			if !c.isMaster && waitCount < 1 {
+				fmt.Println("wait previous master")
+				time.Sleep(2 * CheckInterval)
+				waitCount++
+				continue
+			}
+			waitCount = 0
+			err2 := c.setMaster(c.instanceNum)
+			if err2 != nil {
+				c.handleError(err)
+			}
+
+			continue
+		}
+
+		// если успешно считали ключ master и он не пустой
+		c.isMaster = val == c.instanceNum
+		c.doMasterWork()
+
+		time.Sleep(CheckInterval)
+	}
+}
+
+func (c *Client) doMasterWork() {
+	if c.isMaster {
+		c.f()
+	} else {
+		fmt.Println("I'm slave")
+	}
 }
